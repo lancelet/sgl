@@ -1,3 +1,6 @@
 .stack-work/
 sgl.cabal
 *~
+dist-newstyle/
+extras/
+stack.yaml.lock

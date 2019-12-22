@@ -21,7 +21,10 @@ description:         Please see the README on GitHub at <https://github.com/gith
 
 dependencies:
 - base >= 4.7 && < 5
+- linear
+- managed
 - sdl2
+- vulkan-api
 
 library:
   source-dirs: src

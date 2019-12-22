@@ -23,14 +23,16 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     export VK_ICD_FILENAMES="$VULKAN_SDK/etc/vulkan/icd.d/MoltenVK_icd.json"
     export PATH="$VULKAN_SDK/bin:$PATH"
     export DYLD_LIBRARY_PATH="$VULKAN_SDK/lib"
+    export SDL_VULKAN_LIBRARY="$VULKAN_SDK/lib/libvulkan.1.dylib"
     echo 'Set the following environment variables:'
-    echo "    VULKAN_SDK        '$VULKAN_SDK'"
-    echo "    VK_LAYER_PATH     '$VK_LAYER_PATH'"
-    echo "    VK_ICD_FILENAMES  '$VK_ICD_FILENAMES'"
-    echo "    PATH              '$PATH'"
-    echo "    DYLD_LIBRARY_PATH '$DYLD_LIBRARY_PATH'"
+    echo "    VULKAN_SDK         '$VULKAN_SDK'"
+    echo "    VK_LAYER_PATH      '$VK_LAYER_PATH'"
+    echo "    VK_ICD_FILENAMES   '$VK_ICD_FILENAMES'"
+    echo "    PATH               '$PATH'"
+    echo "    DYLD_LIBRARY_PATH  '$DYLD_LIBRARY_PATH'"
+    echo "    SDL_VULKAN_LIBRARY '$SDL_VULKAN_LIBRARY'"
     install_name_tool -id "$VULKAN_SDK/lib/libvulkan.1.dylib" "$VULKAN_SDK/lib/libvulkan.1.dylib"
 fi
 
 # Set up a shell with SDL2
-nix-shell -p pkgconfig SDL2 --command 'stack build --only-dependencies && stack hoogle --rebuild'
+nix-shell -p pkgconfig SDL2 # --command 'stack build --only-dependencies && stack hoogle --rebuild'

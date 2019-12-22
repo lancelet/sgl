@@ -14,6 +14,7 @@ import           Control.Monad.IO.Class         ( MonadIO
                                                 )
 import qualified Control.Monad.Managed
 import           Control.Monad.Managed          ( MonadManaged )
+import           Data.Traversable               ( for )
 import qualified Foreign
 import qualified Foreign.C
 import qualified Foreign.Marshal
@@ -47,6 +48,9 @@ main = Control.Monad.Managed.runManaged $ do
   vulkanInstance <- logMsg "Creating Vulkan instance"
     *> createVulkanInstance neededExtensions
 
+  physicalDevice <- logMsg "Creating physical device"
+    *> createPhysicalDevice vulkanInstance
+
   SDL.showWindow window
 
   let loop = do
@@ -61,6 +65,30 @@ main = Control.Monad.Managed.runManaged $ do
 
 
 -- from zero to quake 3
+
+createPhysicalDevice
+  :: MonadIO m => Vulkan.VkInstance -> m Vulkan.VkPhysicalDevice
+createPhysicalDevice vk = liftIO $ do
+  physicalDevices :: [Vulkan.VkPhysicalDevice] <- fetchAll
+    (\nPtr ptr ->
+      Vulkan.vkEnumeratePhysicalDevices vk nPtr ptr >>= throwVkResult
+    )
+  typedDevices :: [(Vulkan.VkPhysicalDevice, Vulkan.VkPhysicalDeviceType)] <-
+    for physicalDevices $ \physicalDevice -> do
+      properties <- allocaAndPeek
+        (Vulkan.vkGetPhysicalDeviceProperties physicalDevice)
+      let deviceType = Vulkan.getField @"deviceType" properties
+      pure (physicalDevice, deviceType)
+  let isSuitableDevice
+        :: (Vulkan.VkPhysicalDevice, Vulkan.VkPhysicalDeviceType) -> Bool
+      isSuitableDevice (_, deviceType) =
+        deviceType
+          `elem` [ Vulkan.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU
+                 , Vulkan.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
+                 ]
+  case filter isSuitableDevice typedDevices of
+    []         -> fail "Could not find a suitable physical device"
+    (d, _) : _ -> pure d
 
 logMsg :: MonadIO m => String -> m ()
 logMsg = liftIO . putStrLn
@@ -130,3 +158,19 @@ allocaAndPeek
   -> m a                       -- ^ The `a` value in monad `m`.
 allocaAndPeek f =
   liftIO $ Foreign.Marshal.alloca (\ptr -> f ptr *> Foreign.peek ptr)
+
+fetchAll
+  :: (Foreign.Storable a, Foreign.Storable b, Integral b)
+  => (Foreign.Ptr b -> Foreign.Ptr a -> IO ())
+  -> IO [a]
+fetchAll f = do
+  Foreign.Marshal.alloca $ \nPtr -> do
+    f nPtr Foreign.nullPtr
+    n <- fromIntegral <$> Foreign.peek nPtr
+    allocaAndPeekArray n (f nPtr)
+
+allocaAndPeekArray
+  :: Foreign.Storable a => Int -> (Foreign.Ptr a -> IO ()) -> IO [a]
+allocaAndPeekArray n f = Foreign.Marshal.allocaArray
+  n
+  (\ptr -> f ptr *> Foreign.Marshal.peekArray n ptr)

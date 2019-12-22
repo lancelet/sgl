@@ -14,6 +14,8 @@ import           Control.Monad.IO.Class         ( MonadIO
                                                 )
 import qualified Control.Monad.Managed
 import           Control.Monad.Managed          ( MonadManaged )
+import           Data.Bits                      ( (.&.) )
+import           Data.Function                  ( (&) )
 import           Data.Traversable               ( for )
 import qualified Foreign
 import qualified Foreign.C
@@ -23,6 +25,8 @@ import qualified Graphics.Vulkan.Core_1_0      as Vulkan
 import qualified Graphics.Vulkan.Marshal.Create
                                                as Vulkan
 import           Graphics.Vulkan.Marshal.Create ( (&*) )
+import qualified Graphics.Vulkan.Ext.VK_KHR_swapchain
+                                               as Vulkan
 import           Linear                         ( V2(V2) )
 import qualified SDL
 import           SDL                            ( ($=) )
@@ -45,11 +49,18 @@ main = Control.Monad.Managed.runManaged $ do
   neededExtensions <- getNeededVulkanExtensions window
   logMsg $ "Needed Vulkan extensions: " <> show neededExtensions
 
-  vulkanInstance <- logMsg "Creating Vulkan instance"
+  vulkanInstance :: Vulkan.VkInstance <- logMsg "Creating Vulkan instance"
     *> createVulkanInstance neededExtensions
 
-  physicalDevice <- logMsg "Creating physical device"
+  physicalDevice :: Vulkan.VkPhysicalDevice <- logMsg "Creating physical device"
     *> createPhysicalDevice vulkanInstance
+
+  queueFamilyIndex :: Vulkan.Word32 <- logMsg "Finding suitable queue family"
+    *> findQueueFamilyIndex physicalDevice
+
+  device :: Vulkan.VkDevice <-
+    logMsg "Creating logical device"
+      *> createDevice physicalDevice queueFamilyIndex
 
   SDL.showWindow window
 
@@ -65,6 +76,58 @@ main = Control.Monad.Managed.runManaged $ do
 
 
 -- from zero to quake 3
+
+createDevice
+  :: MonadManaged m
+  => Vulkan.VkPhysicalDevice
+  -> Vulkan.Word32
+  -> m Vulkan.VkDevice
+createDevice physicalDevice queueFamilyIndex = do
+  let queueCreateInfo :: Vulkan.VkDeviceQueueCreateInfo = Vulkan.createVk
+        (  Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO
+        &* Vulkan.set @"pNext" Vulkan.VK_NULL
+        &* Vulkan.set @"queueFamilyIndex" queueFamilyIndex
+        &* Vulkan.set @"queueCount" 1
+        &* Vulkan.setListRef @"pQueuePriorities" [1.0 :: Float]
+        )
+      createInfo :: Vulkan.VkDeviceCreateInfo = Vulkan.createVk
+        (  Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO
+        &* Vulkan.set @"pNext" Vulkan.VK_NULL
+        &* Vulkan.set @"flags" (toEnum 0)
+        &* Vulkan.set @"queueCreateInfoCount" 1
+        &* Vulkan.setListRef @"pQueueCreateInfos" [queueCreateInfo]
+        &* Vulkan.set @"enabledLayerCount" 0
+        &* Vulkan.set @"ppEnabledLayerNames" Vulkan.VK_NULL
+        &* Vulkan.set @"enabledExtensionCount" 1
+        &* Vulkan.setListRef @"ppEnabledExtensionNames"
+             [Vulkan.VK_KHR_SWAPCHAIN_EXTENSION_NAME]
+        &* Vulkan.set @"pEnabledFeatures" Vulkan.VK_NULL
+        )
+  managedVulkanResource
+    (Vulkan.vkCreateDevice physicalDevice (Vulkan.unsafePtr createInfo))
+    Vulkan.vkDestroyDevice
+
+findQueueFamilyIndex :: MonadIO m => Vulkan.VkPhysicalDevice -> m Vulkan.Word32
+findQueueFamilyIndex physicalDevice = liftIO $ do
+  queueFamilies :: [Vulkan.VkQueueFamilyProperties] <- fetchAll
+    (\nQueueFamiliesPtr queueFamiliesPtr ->
+      Vulkan.vkGetPhysicalDeviceQueueFamilyProperties physicalDevice
+                                                      nQueueFamiliesPtr
+                                                      queueFamiliesPtr
+    )
+
+  let isCapable :: Vulkan.VkQueueFamilyProperties -> Bool
+      isCapable p =
+        (Vulkan.getField @"queueFlags" p)
+          .&. Vulkan.VK_QUEUE_GRAPHICS_BIT
+          ==  Vulkan.VK_QUEUE_GRAPHICS_BIT
+
+      capableFamilyIndices :: [Vulkan.Word32] =
+        zip [0 ..] queueFamilies & filter (isCapable . snd) & fmap fst
+
+  case capableFamilyIndices of
+    []      -> fail "No queue family has sufficient (graphics) capabilities"
+    (i : _) -> pure i
 
 createPhysicalDevice
   :: MonadIO m => Vulkan.VkInstance -> m Vulkan.VkPhysicalDevice

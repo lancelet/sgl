@@ -8,6 +8,7 @@ module Main where
 import qualified Control.Exception
 import           Control.Monad                  ( unless
                                                 , (>=>)
+                                                , guard
                                                 )
 import           Control.Monad.IO.Class         ( MonadIO
                                                 , liftIO
@@ -16,7 +17,9 @@ import qualified Control.Monad.Managed
 import           Control.Monad.Managed          ( MonadManaged )
 import           Data.Bits                      ( (.&.)
                                                 , (.|.)
+                                                , testBit
                                                 )
+import           Data.Foldable                  ( for_ )
 import           Data.Function                  ( (&) )
 import           Data.List                      ( sortOn )
 import           Data.Ord                       ( Down(Down) )
@@ -93,6 +96,26 @@ main = Control.Monad.Managed.runManaged $ do
     logMsg "Creating a render pass"
       *> createRenderPass device depthFormat format
 
+  framebuffers :: [Vulkan.VkFramebuffer] <- do
+    logMsg "Creating frame buffers"
+    for images $ \image -> do
+      imageView :: Vulkan.VkImageView <-
+        logMsg "Creating color image view"
+          *> createImageView device
+                             image
+                             format
+                             Vulkan.VK_IMAGE_ASPECT_COLOR_BIT
+      depthImage :: Vulkan.VkImage <-
+        logMsg "Creating depth image"
+          *> createDepthImage physicalDevice device depthFormat extent
+      depthImageView :: Vulkan.VkImageView <-
+        logMsg "Creating depth image view"
+          *> createImageView device
+                             depthImage
+                             depthFormat
+                             Vulkan.VK_IMAGE_ASPECT_DEPTH_BIT
+      createFramebuffer device renderPass imageView depthImageView extent
+
   SDL.showWindow window
 
   let loop = do
@@ -109,6 +132,176 @@ main = Control.Monad.Managed.runManaged $ do
 
 
 -- from zero to quake 3
+
+createFramebuffer
+  :: MonadManaged m
+  => Vulkan.VkDevice
+  -> Vulkan.VkRenderPass
+  -> Vulkan.VkImageView
+  -> Vulkan.VkImageView
+  -> Vulkan.VkExtent2D
+  -> m Vulkan.VkFramebuffer
+createFramebuffer dev renderPass colorImageView depthView extent = do
+  let createInfo = Vulkan.createVk
+        (  Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO
+        &* Vulkan.set @"pNext" Vulkan.vkNullPtr
+        &* Vulkan.set @"flags" Vulkan.VK_ZERO_FLAGS
+        &* Vulkan.set @"renderPass" renderPass
+        &* Vulkan.set @"attachmentCount" 2
+        &* Vulkan.setListRef @"pAttachments" [colorImageView, depthView]
+        &* Vulkan.set @"width" (Vulkan.getField @"width" extent)
+        &* Vulkan.set @"height" (Vulkan.getField @"height" extent)
+        &* Vulkan.set @"layers" 1
+        )
+
+  managedVulkanResource
+    (Vulkan.vkCreateFramebuffer dev (Vulkan.unsafePtr createInfo))
+    (Vulkan.vkDestroyFramebuffer dev)
+
+createDepthImage
+  :: MonadManaged m
+  => Vulkan.VkPhysicalDevice
+  -> Vulkan.VkDevice
+  -> Vulkan.VkFormat
+  -> Vulkan.VkExtent2D
+  -> m Vulkan.VkImage
+createDepthImage physicalDevice device depthFormat extent = do
+  let
+    extent3d =
+      -- TODO
+               Vulkan.createVk
+      (  Vulkan.set @"width" (Vulkan.getField @"width" extent)
+      &* Vulkan.set @"height" (Vulkan.getField @"height" extent)
+      &* Vulkan.set @"depth" 1
+      )
+
+    createInfo = Vulkan.createVk
+      (  Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO
+      &* Vulkan.set @"pNext" Vulkan.VK_NULL
+      &* Vulkan.set @"flags" Vulkan.VK_ZERO_FLAGS
+      &* Vulkan.set @"imageType" Vulkan.VK_IMAGE_TYPE_2D
+      &* Vulkan.set @"format" depthFormat
+      &* Vulkan.set @"extent" extent3d
+      &* Vulkan.set @"mipLevels" 1
+      &* Vulkan.set @"arrayLayers" 1
+      &* Vulkan.set @"samples" Vulkan.VK_SAMPLE_COUNT_1_BIT
+      &* Vulkan.set @"tiling" Vulkan.VK_IMAGE_TILING_OPTIMAL
+      &* Vulkan.set @"usage"
+           Vulkan.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+      &* Vulkan.set @"sharingMode" Vulkan.VK_SHARING_MODE_EXCLUSIVE
+      &* Vulkan.set @"queueFamilyIndexCount" 0
+      &* Vulkan.set @"pQueueFamilyIndices" Vulkan.VK_NULL
+      &* Vulkan.set @"initialLayout" Vulkan.VK_IMAGE_LAYOUT_UNDEFINED
+      )
+
+  image <- managedVulkanResource
+    (Vulkan.vkCreateImage device (Vulkan.unsafePtr createInfo))
+    (Vulkan.vkDestroyImage device)
+
+  memoryRequirements <- allocaAndPeek
+    (Vulkan.vkGetImageMemoryRequirements device image)
+
+  memory <- allocateMemoryFor physicalDevice device memoryRequirements []
+
+  liftIO (Vulkan.vkBindImageMemory device image memory 0 >>= throwVkResult)
+
+  return image
+
+allocateMemoryFor
+  :: MonadIO m
+  => Vulkan.VkPhysicalDevice
+  -> Vulkan.VkDevice
+  -> Vulkan.VkMemoryRequirements
+  -> [Vulkan.VkMemoryPropertyFlags]
+  -> m Vulkan.VkDeviceMemory
+allocateMemoryFor physicalDevice device requirements requiredFlags = do
+  memoryProperties <- allocaAndPeek
+    (Vulkan.vkGetPhysicalDeviceMemoryProperties physicalDevice)
+
+  let memoryTypeCount = Vulkan.getField @"memoryTypeCount" memoryProperties
+
+  memoryTypes <- liftIO $ Foreign.Marshal.peekArray @Vulkan.VkMemoryType
+    (fromIntegral memoryTypeCount)
+    (                 Vulkan.unsafePtr memoryProperties
+    `Foreign.plusPtr` Vulkan.fieldOffset @"memoryTypes"
+                      @Vulkan.VkPhysicalDeviceMemoryProperties
+    )
+
+  let possibleMemoryTypeIndices = do
+        (i, memoryType) <- zip [0 ..] memoryTypes
+
+        guard
+          (testBit (Vulkan.getField @"memoryTypeBits" requirements)
+                   (fromIntegral i)
+          )
+
+        for_
+          requiredFlags
+          (\f -> guard
+            (   Vulkan.getField @"propertyFlags" memoryType
+            .&. f
+            /=  Vulkan.VK_ZERO_FLAGS
+            )
+          )
+
+        return i
+
+  memoryTypeIndex <- case possibleMemoryTypeIndices of
+    []      -> fail "No possible memory types"
+
+    (i : _) -> return i
+
+  let allocateInfo = Vulkan.createVk
+        (  Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO
+        &* Vulkan.set @"pNext" Vulkan.VK_NULL
+        &* Vulkan.set @"allocationSize" (Vulkan.getField @"size" requirements)
+        &* Vulkan.set @"memoryTypeIndex" memoryTypeIndex
+        )
+
+  allocaAndPeek
+    (   Vulkan.vkAllocateMemory device
+                                (Vulkan.unsafePtr allocateInfo)
+                                Vulkan.VK_NULL_HANDLE
+    >=> throwVkResult
+    )
+
+createImageView
+  :: MonadManaged m
+  => Vulkan.VkDevice
+  -> Vulkan.VkImage
+  -> Vulkan.VkFormat
+  -> Vulkan.VkImageAspectBitmask Vulkan.FlagMask
+  -> m Vulkan.VkImageView
+createImageView dev image format aspectMask = do
+  let components :: Vulkan.VkComponentMapping = Vulkan.createVk
+        (  Vulkan.set @"r" Vulkan.VK_COMPONENT_SWIZZLE_IDENTITY
+        &* Vulkan.set @"g" Vulkan.VK_COMPONENT_SWIZZLE_IDENTITY
+        &* Vulkan.set @"b" Vulkan.VK_COMPONENT_SWIZZLE_IDENTITY
+        &* Vulkan.set @"a" Vulkan.VK_COMPONENT_SWIZZLE_IDENTITY
+        )
+
+      subResourceRange :: Vulkan.VkImageSubresourceRange = Vulkan.createVk
+        (  Vulkan.set @"aspectMask" aspectMask
+        &* Vulkan.set @"baseMipLevel" 0
+        &* Vulkan.set @"levelCount" 1
+        &* Vulkan.set @"baseArrayLayer" 0
+        &* Vulkan.set @"layerCount" 1
+        )
+
+      createInfo :: Vulkan.VkImageViewCreateInfo = Vulkan.createVk
+        (  Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO
+        &* Vulkan.set @"pNext" Vulkan.VK_NULL
+        &* Vulkan.set @"flags" Vulkan.VK_ZERO_FLAGS
+        &* Vulkan.set @"image" image
+        &* Vulkan.set @"viewType" Vulkan.VK_IMAGE_VIEW_TYPE_2D
+        &* Vulkan.set @"format" format
+        &* Vulkan.set @"components" components
+        &* Vulkan.set @"subresourceRange" subResourceRange
+        )
+
+  managedVulkanResource
+    (Vulkan.vkCreateImageView dev (Vulkan.unsafePtr createInfo))
+    (Vulkan.vkDestroyImageView dev)
 
 createRenderPass
   :: MonadManaged m

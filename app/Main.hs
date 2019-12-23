@@ -77,6 +77,10 @@ main = Control.Monad.Managed.runManaged $ do
     logMsg "Finding correct swapchain format and color space"
       *> determineSwapchainFormat physicalDevice surface
 
+  (swapchain :: Vulkan.VkSwapchainKHR, extent :: Vulkan.VkExtent2D) <-
+    logMsg "Creating swapchain"
+      *> createSwapchain physicalDevice device surface format colorSpace
+
   SDL.showWindow window
 
   let loop = do
@@ -93,6 +97,52 @@ main = Control.Monad.Managed.runManaged $ do
 
 
 -- from zero to quake 3
+
+createSwapchain
+  :: (MonadIO m, MonadManaged m)
+  => Vulkan.VkPhysicalDevice
+  -> Vulkan.VkDevice
+  -> SDL.VkSurfaceKHR
+  -> Vulkan.VkFormat
+  -> Vulkan.VkColorSpaceKHR
+  -> m (Vulkan.VkSwapchainKHR, Vulkan.VkExtent2D)
+createSwapchain physicalDevice device surface format colorSpace = do
+  surfaceCapabilities <- liftIO $ allocaAndPeek
+    (   Vulkan.vkGetPhysicalDeviceSurfaceCapabilitiesKHR physicalDevice
+                                                         (Vulkan.VkPtr surface)
+    >=> throwVkResult
+    )
+
+  let
+    minImageCount    = Vulkan.getField @"minImageCount" surfaceCapabilities
+    currentExtent    = Vulkan.getField @"currentExtent" surfaceCapabilities
+    currentTransform = Vulkan.getField @"currentTransform" surfaceCapabilities
+
+    swapchainCreateInfo :: Vulkan.VkSwapchainCreateInfoKHR = Vulkan.createVk
+      (  Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR
+      &* Vulkan.set @"pNext" Vulkan.VK_NULL
+      &* Vulkan.set @"surface" (Vulkan.VkPtr surface)
+      &* Vulkan.set @"minImageCount" minImageCount
+      &* Vulkan.set @"imageFormat" format
+      &* Vulkan.set @"imageColorSpace" colorSpace
+      &* Vulkan.set @"imageExtent" currentExtent
+      &* Vulkan.set @"imageArrayLayers" 1
+      &* Vulkan.set @"imageUsage" Vulkan.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+      &* Vulkan.set @"imageSharingMode" Vulkan.VK_SHARING_MODE_EXCLUSIVE
+      &* Vulkan.set @"queueFamilyIndexCount" 0
+      &* Vulkan.set @"pQueueFamilyIndices" Vulkan.VK_NULL
+      &* Vulkan.set @"preTransform" currentTransform
+      &* Vulkan.set @"compositeAlpha" Vulkan.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
+      &* Vulkan.set @"presentMode" Vulkan.VK_PRESENT_MODE_FIFO_KHR
+      &* Vulkan.set @"clipped" Vulkan.VK_TRUE
+      &* Vulkan.set @"oldSwapchain" Vulkan.VK_NULL_HANDLE
+      )
+
+  swapchain <- managedVulkanResource
+    (Vulkan.vkCreateSwapchainKHR device (Vulkan.unsafePtr swapchainCreateInfo))
+    (Vulkan.vkDestroySwapchainKHR device)
+
+  pure (swapchain, currentExtent)
 
 determineSwapchainFormat
   :: MonadIO m

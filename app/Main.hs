@@ -14,7 +14,9 @@ import           Control.Monad.IO.Class         ( MonadIO
                                                 )
 import qualified Control.Monad.Managed
 import           Control.Monad.Managed          ( MonadManaged )
-import           Data.Bits                      ( (.&.) )
+import           Data.Bits                      ( (.&.)
+                                                , (.|.)
+                                                )
 import           Data.Function                  ( (&) )
 import           Data.List                      ( sortOn )
 import           Data.Ord                       ( Down(Down) )
@@ -87,6 +89,10 @@ main = Control.Monad.Managed.runManaged $ do
   depthFormat :: Vulkan.VkFormat <- logMsg "Finding optimal depth format"
     *> findOptimalDepthFormat physicalDevice
 
+  renderPass :: Vulkan.VkRenderPass <-
+    logMsg "Creating a render pass"
+      *> createRenderPass device depthFormat format
+
   SDL.showWindow window
 
   let loop = do
@@ -104,8 +110,97 @@ main = Control.Monad.Managed.runManaged $ do
 
 -- from zero to quake 3
 
+createRenderPass
+  :: MonadManaged m
+  => Vulkan.VkDevice
+  -> Vulkan.VkFormat
+  -> Vulkan.VkFormat
+  -> m Vulkan.VkRenderPass
+createRenderPass dev depthFormat imageFormat = do
+  let
+    colorAttachmentDescription = Vulkan.createVk
+      (  Vulkan.set @"flags" Vulkan.VK_ZERO_FLAGS
+      &* Vulkan.set @"format" imageFormat
+      &* Vulkan.set @"samples" Vulkan.VK_SAMPLE_COUNT_1_BIT
+      &* Vulkan.set @"loadOp" Vulkan.VK_ATTACHMENT_LOAD_OP_CLEAR
+      &* Vulkan.set @"storeOp" Vulkan.VK_ATTACHMENT_STORE_OP_STORE
+      &* Vulkan.set @"stencilLoadOp" Vulkan.VK_ATTACHMENT_LOAD_OP_DONT_CARE
+      &* Vulkan.set @"stencilStoreOp" Vulkan.VK_ATTACHMENT_STORE_OP_DONT_CARE
+      &* Vulkan.set @"initialLayout" Vulkan.VK_IMAGE_LAYOUT_UNDEFINED
+      &* Vulkan.set @"finalLayout" Vulkan.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+      )
+
+    depthAttachmentDescription = Vulkan.createVk
+      (  Vulkan.set @"flags" Vulkan.VK_ZERO_FLAGS
+      &* Vulkan.set @"format" depthFormat
+      &* Vulkan.set @"samples" Vulkan.VK_SAMPLE_COUNT_1_BIT
+      &* Vulkan.set @"loadOp" Vulkan.VK_ATTACHMENT_LOAD_OP_CLEAR
+      &* Vulkan.set @"storeOp" Vulkan.VK_ATTACHMENT_STORE_OP_STORE
+      &* Vulkan.set @"stencilLoadOp" Vulkan.VK_ATTACHMENT_LOAD_OP_DONT_CARE
+      &* Vulkan.set @"stencilStoreOp" Vulkan.VK_ATTACHMENT_STORE_OP_DONT_CARE
+      &* Vulkan.set @"initialLayout" Vulkan.VK_IMAGE_LAYOUT_UNDEFINED
+      &* Vulkan.set @"finalLayout"
+           Vulkan.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+      )
+
+    colorAttachmentReference = Vulkan.createVk
+      (  Vulkan.set @"attachment" 0
+      &* Vulkan.set @"layout" Vulkan.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+      )
+
+    depthAttachmentReference = Vulkan.createVk
+      (  Vulkan.set @"attachment" 1
+      &* Vulkan.set @"layout"
+           Vulkan.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+      )
+
+    subpass = Vulkan.createVk
+      (  Vulkan.set @"flags" Vulkan.VK_ZERO_FLAGS
+      &* Vulkan.set @"pipelineBindPoint"
+           Vulkan.VK_PIPELINE_BIND_POINT_GRAPHICS
+      &* Vulkan.set @"colorAttachmentCount" 1
+      &* Vulkan.setListRef @"pColorAttachments" [colorAttachmentReference]
+      &* Vulkan.set @"inputAttachmentCount" 0
+      &* Vulkan.set @"pInputAttachments" Vulkan.vkNullPtr
+      &* Vulkan.set @"pResolveAttachments" Vulkan.vkNullPtr
+      &* Vulkan.setVkRef @"pDepthStencilAttachment" depthAttachmentReference
+      &* Vulkan.set @"preserveAttachmentCount" 0
+      &* Vulkan.set @"pPreserveAttachments" Vulkan.vkNullPtr
+      )
+
+    dependency1 = Vulkan.createVk
+      (  Vulkan.set @"srcSubpass" Vulkan.VK_SUBPASS_EXTERNAL
+      &* Vulkan.set @"dstSubpass" 0
+      &* Vulkan.set @"srcStageMask"
+           Vulkan.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+      &* Vulkan.set @"srcAccessMask" Vulkan.VK_ZERO_FLAGS
+      &* Vulkan.set @"dstStageMask"
+           Vulkan.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+      &* Vulkan.set @"dstAccessMask"
+           (   Vulkan.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
+           .|. Vulkan.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+           )
+      )
+
+    createInfo = Vulkan.createVk
+      (  Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO
+      &* Vulkan.set @"pNext" Vulkan.vkNullPtr
+      &* Vulkan.set @"flags" Vulkan.VK_ZERO_FLAGS
+      &* Vulkan.set @"attachmentCount" 2
+      &* Vulkan.setListRef @"pAttachments"
+           [colorAttachmentDescription, depthAttachmentDescription]
+      &* Vulkan.set @"subpassCount" 1
+      &* Vulkan.setListRef @"pSubpasses" [subpass]
+      &* Vulkan.set @"dependencyCount" 1
+      &* Vulkan.setListRef @"pDependencies" [dependency1]
+      )
+
+  managedVulkanResource
+    (Vulkan.vkCreateRenderPass dev (Vulkan.unsafePtr createInfo))
+    (Vulkan.vkDestroyRenderPass dev)
+
 findOptimalDepthFormat
-  :: forall m . MonadIO m => Vulkan.VkPhysicalDevice -> m Vulkan.VkFormat
+  :: forall  m . MonadIO m => Vulkan.VkPhysicalDevice -> m Vulkan.VkFormat
 findOptimalDepthFormat physicalDevice = findFirstSupported
   [ Vulkan.VK_FORMAT_D32_SFLOAT
   , Vulkan.VK_FORMAT_D32_SFLOAT_S8_UINT

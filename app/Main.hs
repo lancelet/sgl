@@ -84,6 +84,9 @@ main = Control.Monad.Managed.runManaged $ do
   images :: [Vulkan.VkImage] <-
     logMsg "Getting swapchain images" *> getSwapchainImages device swapchain
 
+  depthFormat :: Vulkan.VkFormat <- logMsg "Finding optimal depth format"
+    *> findOptimalDepthFormat physicalDevice
+
   SDL.showWindow window
 
   let loop = do
@@ -100,6 +103,32 @@ main = Control.Monad.Managed.runManaged $ do
 
 
 -- from zero to quake 3
+
+findOptimalDepthFormat
+  :: forall m . MonadIO m => Vulkan.VkPhysicalDevice -> m Vulkan.VkFormat
+findOptimalDepthFormat physicalDevice = findFirstSupported
+  [ Vulkan.VK_FORMAT_D32_SFLOAT
+  , Vulkan.VK_FORMAT_D32_SFLOAT_S8_UINT
+  , Vulkan.VK_FORMAT_D24_UNORM_S8_UINT
+  ]
+ where
+  findFirstSupported :: [Vulkan.VkFormat] -> m Vulkan.VkFormat
+  findFirstSupported fmtList = case fmtList of
+    []       -> fail "Could not find a valid depth format"
+    (x : xs) -> do
+      properties <- allocaAndPeek
+        (Vulkan.vkGetPhysicalDeviceFormatProperties physicalDevice x)
+      if supportsDepthAttachment properties
+        then pure x
+        else findFirstSupported xs
+
+  supportsDepthAttachment :: Vulkan.VkFormatProperties -> Bool
+  supportsDepthAttachment props = testBitmask
+    (Vulkan.getField @"optimalTilingFeatures" props)
+    Vulkan.VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+
+  testBitmask mask featureFlag = mask .&. featureFlag == featureFlag
+
 
 getSwapchainImages
   :: MonadIO m => Vulkan.VkDevice -> Vulkan.VkSwapchainKHR -> m [Vulkan.VkImage]

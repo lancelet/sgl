@@ -116,6 +116,9 @@ main = Control.Monad.Managed.runManaged $ do
                              Vulkan.VK_IMAGE_ASPECT_DEPTH_BIT
       createFramebuffer device renderPass imageView depthImageView extent
 
+  commandPool :: Vulkan.VkCommandPool <-
+    logMsg "Creating command pool" *> createCommandPool device queueFamilyIndex
+
   SDL.showWindow window
 
   let loop = do
@@ -132,6 +135,23 @@ main = Control.Monad.Managed.runManaged $ do
 
 
 -- from zero to quake 3
+
+createCommandPool
+  :: MonadManaged m
+  => Vulkan.VkDevice
+  -> Vulkan.Word32
+  -> m Vulkan.VkCommandPool
+createCommandPool dev queueFamilyIndex = do
+  let createInfo = Vulkan.createVk
+        (  Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO
+        &* Vulkan.set @"pNext" Vulkan.vkNullPtr
+        &* Vulkan.set @"flags" Vulkan.VK_ZERO_FLAGS
+        &* Vulkan.set @"queueFamilyIndex" queueFamilyIndex
+        )
+
+  managedVulkanResource
+    (Vulkan.vkCreateCommandPool dev (Vulkan.unsafePtr createInfo))
+    (Vulkan.vkDestroyCommandPool dev)
 
 createFramebuffer
   :: MonadManaged m

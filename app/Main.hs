@@ -16,6 +16,8 @@ import qualified Control.Monad.Managed
 import           Control.Monad.Managed          ( MonadManaged )
 import           Data.Bits                      ( (.&.) )
 import           Data.Function                  ( (&) )
+import           Data.List                      ( sortOn )
+import           Data.Ord                       ( Down(Down) )
 import           Data.Traversable               ( for )
 import qualified Foreign
 import qualified Foreign.C
@@ -26,6 +28,8 @@ import qualified Graphics.Vulkan.Marshal.Create
                                                as Vulkan
 import           Graphics.Vulkan.Marshal.Create ( (&*) )
 import qualified Graphics.Vulkan.Ext.VK_KHR_swapchain
+                                               as Vulkan
+import qualified Graphics.Vulkan.Ext.VK_KHR_surface
                                                as Vulkan
 import           Linear                         ( V2(V2) )
 import qualified SDL
@@ -43,6 +47,7 @@ main = Control.Monad.Managed.runManaged $ do
   enableSDLLogging
   logMsg "Initializing SDL"
   SDL.initialize [SDL.InitVideo]
+  SDL.vkLoadLibrary Nothing
 
   window           <- createWindow
 
@@ -62,6 +67,16 @@ main = Control.Monad.Managed.runManaged $ do
     logMsg "Creating logical device"
       *> createDevice physicalDevice queueFamilyIndex
 
+  surface :: SDL.VkSurfaceKHR <-
+    logMsg "Creating SDL surface"
+      *> SDL.vkCreateSurface window (Foreign.castPtr vulkanInstance)
+
+  assertSurfacePresentable physicalDevice queueFamilyIndex surface
+
+  (format :: Vulkan.VkFormat, colorSpace :: Vulkan.VkColorSpaceKHR) <-
+    logMsg "Finding correct swapchain format and color space"
+      *> determineSwapchainFormat physicalDevice surface
+
   SDL.showWindow window
 
   let loop = do
@@ -72,10 +87,65 @@ main = Control.Monad.Managed.runManaged $ do
 
   loop
 
+  SDL.destroyWindow window
+  SDL.vkUnloadLibrary
   SDL.quit
 
 
 -- from zero to quake 3
+
+determineSwapchainFormat
+  :: MonadIO m
+  => Vulkan.VkPhysicalDevice
+  -> SDL.VkSurfaceKHR
+  -> m (Vulkan.VkFormat, Vulkan.VkColorSpaceKHR)
+determineSwapchainFormat physicalDevice surface = liftIO $ do
+  surfaceFormats :: [Vulkan.VkSurfaceFormatKHR] <- fetchAll
+    (\surfaceFormatCountPtr surfaceFormatsPtr ->
+      Vulkan.vkGetPhysicalDeviceSurfaceFormatsKHR physicalDevice
+                                                  (Vulkan.VkPtr surface)
+                                                  surfaceFormatCountPtr
+                                                  surfaceFormatsPtr
+        >>= throwVkResult
+    )
+
+  let score
+        :: Vulkan.VkSurfaceFormatKHR
+        -> (Int, Vulkan.VkFormat, Vulkan.VkColorSpaceKHR)
+      score surfaceFormat = (intScore, format, colorSpace)
+       where
+        intScore = sum
+          [ if format == Vulkan.VK_FORMAT_B8G8R8A8_UNORM then 1 else 0
+          , if colorSpace == Vulkan.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR
+            then 1
+            else 0
+          ]
+        format     = Vulkan.getField @"format" surfaceFormat
+        colorSpace = Vulkan.getField @"colorSpace" surfaceFormat
+
+      scoredFormats :: [(Vulkan.VkFormat, Vulkan.VkColorSpaceKHR)] =
+        fmap score surfaceFormats
+          & sortOn (\(intScore, _, _) -> Down intScore)
+          & fmap (\(_, format, colorSpace) -> (format, colorSpace))
+
+  case scoredFormats of
+    []    -> fail "No formats found"
+    x : _ -> pure x
+
+assertSurfacePresentable
+  :: MonadIO m
+  => Vulkan.VkPhysicalDevice
+  -> Vulkan.Word32
+  -> SDL.VkSurfaceKHR
+  -> m ()
+assertSurfacePresentable physicalDevice queueFamilyIndex surface = liftIO $ do
+  bool <- allocaAndPeek
+    (   Vulkan.vkGetPhysicalDeviceSurfaceSupportKHR physicalDevice
+                                                    queueFamilyIndex
+                                                    (Vulkan.VkPtr surface)
+    >=> throwVkResult
+    )
+  unless (bool == Vulkan.VK_TRUE) (fail "Unsupported surface")
 
 createDevice
   :: MonadManaged m

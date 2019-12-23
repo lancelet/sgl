@@ -81,6 +81,9 @@ main = Control.Monad.Managed.runManaged $ do
     logMsg "Creating swapchain"
       *> createSwapchain physicalDevice device surface format colorSpace
 
+  images :: [Vulkan.VkImage] <-
+    logMsg "Getting swapchain images" *> getSwapchainImages device swapchain
+
   SDL.showWindow window
 
   let loop = do
@@ -97,6 +100,14 @@ main = Control.Monad.Managed.runManaged $ do
 
 
 -- from zero to quake 3
+
+getSwapchainImages
+  :: MonadIO m => Vulkan.VkDevice -> Vulkan.VkSwapchainKHR -> m [Vulkan.VkImage]
+getSwapchainImages device swapchain = liftIO $ fetchAll
+  (\imageCountPtr imagesPtr ->
+    Vulkan.vkGetSwapchainImagesKHR device swapchain imageCountPtr imagesPtr
+      >>= throwVkResult
+  )
 
 createSwapchain
   :: (MonadIO m, MonadManaged m)

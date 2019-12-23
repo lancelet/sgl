@@ -119,6 +119,9 @@ main = Control.Monad.Managed.runManaged $ do
   commandPool :: Vulkan.VkCommandPool <-
     logMsg "Creating command pool" *> createCommandPool device queueFamilyIndex
 
+  queue :: Vulkan.VkQueue <-
+    logMsg "Getting command queue" *> getQueue device queueFamilyIndex
+
   SDL.showWindow window
 
   let loop = do
@@ -135,6 +138,10 @@ main = Control.Monad.Managed.runManaged $ do
 
 
 -- from zero to quake 3
+
+getQueue :: MonadIO m => Vulkan.VkDevice -> Vulkan.Word32 -> m Vulkan.VkQueue
+getQueue device queueFamilyIndex =
+  liftIO $ allocaAndPeek (Vulkan.vkGetDeviceQueue device queueFamilyIndex 0)
 
 createCommandPool
   :: MonadManaged m

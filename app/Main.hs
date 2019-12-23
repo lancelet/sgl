@@ -213,7 +213,8 @@ createPipeline device renderPass extent layout0 = do
 
     fragmentShaderStage :: Vulkan.VkPipelineShaderStageCreateInfo =
       Vulkan.createVk
-        (  Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO
+        (  Vulkan.set @"sType"
+            Vulkan.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO
         &* Vulkan.set @"pNext" Vulkan.VK_NULL
         &* Vulkan.set @"flags" Vulkan.VK_ZERO_FLAGS
         &* Vulkan.setStrRef @"pName" "main"
@@ -241,105 +242,99 @@ createPipeline device renderPass extent layout0 = do
         &* Vulkan.set @"vertexAttributeDescriptionCount" ( fromIntegral ( length vertexInputAttributeDescriptions ) )
         &* Vulkan.setListRef @"pVertexAttributeDescriptions" vertexInputAttributeDescriptions
         )
+    -}
 
-    assemblyStateCreateInfo =
+    assemblyStateCreateInfo :: Vulkan.VkPipelineInputAssemblyStateCreateInfo =
       Vulkan.createVk
-        (  Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO
+        (  Vulkan.set @"sType"
+            Vulkan.VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO
         &* Vulkan.set @"pNext" Vulkan.VK_NULL
         &* Vulkan.set @"topology" Vulkan.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
         &* Vulkan.set @"primitiveRestartEnable" Vulkan.VK_FALSE
         )
 
-    viewport =
-      Vulkan.createVk
-        (  Vulkan.set @"x" 0
-        &* Vulkan.set @"y" 0
-        &* Vulkan.set @"width" ( fromIntegral ( Vulkan.getField @"width" extent ) )
-        &* Vulkan.set @"height" ( fromIntegral ( Vulkan.getField @"height" extent ) )
-        &* Vulkan.set @"minDepth" 0
-        &* Vulkan.set @"maxDepth" 1
-        )
+    viewport :: Vulkan.VkViewport = Vulkan.createVk
+      (  Vulkan.set @"x" 0
+      &* Vulkan.set @"y" 0
+      &* Vulkan.set @"width" (fromIntegral (Vulkan.getField @"width" extent))
+      &* Vulkan.set @"height"
+           (fromIntegral (Vulkan.getField @"height" extent))
+      &* Vulkan.set @"minDepth" 0
+      &* Vulkan.set @"maxDepth" 1
+      )
 
-    scissor =
-      let
-        offset =
-          Vulkan.createVk
-            (  Vulkan.set @"x" 0
-            &* Vulkan.set @"y" 0
-            )
+    scissor :: Vulkan.VkRect2D =
+      let offset = Vulkan.createVk (Vulkan.set @"x" 0 &* Vulkan.set @"y" 0)
+      in  Vulkan.createVk
+            (Vulkan.set @"offset" offset &* Vulkan.set @"extent" extent)
 
-      in
-      Vulkan.createVk
-        (  Vulkan.set @"offset" offset
-        &* Vulkan.set @"extent" extent
-        )
+    viewportState :: Vulkan.VkPipelineViewportStateCreateInfo = Vulkan.createVk
+      (  Vulkan.set @"sType"
+          Vulkan.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO
+      &* Vulkan.set @"pNext" Vulkan.VK_NULL
+      &* Vulkan.set @"flags" Vulkan.VK_ZERO_FLAGS
+      &* Vulkan.set @"viewportCount" 1
+      &* Vulkan.set @"scissorCount" 1
+      &* Vulkan.setListRef @"pViewports" [viewport]
+      &* Vulkan.setListRef @"pScissors" [scissor]
+      )
 
-    viewportState =
+    multisampleState :: Vulkan.VkPipelineMultisampleStateCreateInfo =
       Vulkan.createVk
-        (  Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO
-        &* Vulkan.set @"pNext" Vulkan.VK_NULL
-        &* Vulkan.set @"flags" 0
-        &* Vulkan.set @"viewportCount" 1
-        &* Vulkan.set @"scissorCount" 1
-        &* Vulkan.setListRef @"pViewports" [ viewport ]
-        &* Vulkan.setListRef @"pScissors" [ scissor ]
-        )
-
-    multisampleState =
-      Vulkan.createVk
-        (  Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO
+        (  Vulkan.set @"sType"
+            Vulkan.VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO
         &* Vulkan.set @"minSampleShading" 1
         &* Vulkan.set @"rasterizationSamples" Vulkan.VK_SAMPLE_COUNT_1_BIT
         &* Vulkan.set @"pNext" Vulkan.VK_NULL
         )
 
-    attachmentState =
+    attachmentState :: Vulkan.VkPipelineColorBlendAttachmentState =
       Vulkan.createVk
-        ( Vulkan.set @"blendEnable" Vulkan.VK_FALSE
+        (  Vulkan.set @"blendEnable" Vulkan.VK_FALSE
         &* Vulkan.set @"alphaBlendOp" Vulkan.VK_BLEND_OP_ADD
         &* Vulkan.set @"srcColorBlendFactor" Vulkan.VK_BLEND_FACTOR_ONE
         &* Vulkan.set @"dstColorBlendFactor" Vulkan.VK_BLEND_FACTOR_ZERO
         &* Vulkan.set @"colorBlendOp" Vulkan.VK_BLEND_OP_ADD
         &* Vulkan.set @"srcAlphaBlendFactor" Vulkan.VK_BLEND_FACTOR_ONE
         &* Vulkan.set @"dstAlphaBlendFactor" Vulkan.VK_BLEND_FACTOR_ZERO
-        &* Vulkan.set
-             @"colorWriteMask"
-             ( Vulkan.VK_COLOR_COMPONENT_R_BIT
-                 .|. Vulkan.VK_COLOR_COMPONENT_G_BIT
-                 .|. Vulkan.VK_COLOR_COMPONENT_B_BIT
-                 .|. Vulkan.VK_COLOR_COMPONENT_A_BIT
+        &* Vulkan.set @"colorWriteMask"
+             (   Vulkan.VK_COLOR_COMPONENT_R_BIT
+             .|. Vulkan.VK_COLOR_COMPONENT_G_BIT
+             .|. Vulkan.VK_COLOR_COMPONENT_B_BIT
+             .|. Vulkan.VK_COLOR_COMPONENT_A_BIT
              )
         )
 
-    colorBlendState =
+    colorBlendState :: Vulkan.VkPipelineColorBlendStateCreateInfo =
       Vulkan.createVk
-        ( Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO
+        (  Vulkan.set @"sType"
+            Vulkan.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO
         &* Vulkan.setAt @"blendConstants" @0 0
         &* Vulkan.setAt @"blendConstants" @1 0
         &* Vulkan.setAt @"blendConstants" @2 0
         &* Vulkan.setAt @"blendConstants" @3 0
         &* Vulkan.set @"attachmentCount" 1
-        &* Vulkan.setListRef @"pAttachments" [ attachmentState ]
+        &* Vulkan.setListRef @"pAttachments" [attachmentState]
         &* Vulkan.set @"logicOp" Vulkan.VK_LOGIC_OP_COPY
         &* Vulkan.set @"pNext" Vulkan.VK_NULL
         )
 
-    nullStencilOp =
-      Vulkan.createVk
-        (  Vulkan.set @"reference" 0
-        &* Vulkan.set @"writeMask" 0
-        &* Vulkan.set @"compareMask" 0
-        &* Vulkan.set @"compareOp" Vulkan.VK_COMPARE_OP_EQUAL
-        &* Vulkan.set @"depthFailOp" Vulkan.VK_STENCIL_OP_KEEP
-        &* Vulkan.set @"passOp" Vulkan.VK_STENCIL_OP_KEEP
-        &* Vulkan.set @"failOp" Vulkan.VK_STENCIL_OP_KEEP
-        )
+    nullStencilOp :: Vulkan.VkStencilOpState = Vulkan.createVk
+      (  Vulkan.set @"reference" 0
+      &* Vulkan.set @"writeMask" 0
+      &* Vulkan.set @"compareMask" 0
+      &* Vulkan.set @"compareOp" Vulkan.VK_COMPARE_OP_EQUAL
+      &* Vulkan.set @"depthFailOp" Vulkan.VK_STENCIL_OP_KEEP
+      &* Vulkan.set @"passOp" Vulkan.VK_STENCIL_OP_KEEP
+      &* Vulkan.set @"failOp" Vulkan.VK_STENCIL_OP_KEEP
+      )
 
-    depthStencilState =
+    depthStencilState :: Vulkan.VkPipelineDepthStencilStateCreateInfo =
       Vulkan.createVk
-        (  Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO
+        (  Vulkan.set @"sType"
+            Vulkan.VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO
         &* Vulkan.set @"pNext" Vulkan.VK_NULL
-        &* Vulkan.set @"flags" 0
+        &* Vulkan.set @"flags" Vulkan.VK_ZERO_FLAGS
         &* Vulkan.set @"depthTestEnable" Vulkan.VK_TRUE
         &* Vulkan.set @"depthWriteEnable" Vulkan.VK_TRUE
         &* Vulkan.set @"depthCompareOp" Vulkan.VK_COMPARE_OP_LESS_OR_EQUAL
@@ -350,11 +345,12 @@ createPipeline device renderPass extent layout0 = do
         &* Vulkan.set @"back" nullStencilOp
         )
 
+    {-
     createInfo =
       Vulkan.createVk
         (  Vulkan.set @"sType" Vulkan.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO
         &* Vulkan.set @"pNext" Vulkan.VK_NULL
-        &* Vulkan.set @"flags" 0
+        &* Vulkan.set @"flags" Vulkan.VK_ZERO_FLAGS
         &* Vulkan.set @"stageCount" 2
         &* Vulkan.setListRef @"pStages" [ vertexShaderStage, fragmentShaderStage ]
         &* Vulkan.setVkRef @"pVertexInputState" vertexInputState
